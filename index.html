@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>WW - Sploosh Kaboom</title>
+  <style>
+    :root{--cell:44px;--gap:6px}
+    body{
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;
+      margin:0;
+      color:#0a0a0a;
+      background-image:url('/img/background.jpg');
+      background-size:cover;
+      background-position:center;
+      background-repeat:no-repeat;
+      min-height:100vh;
+    }
+    h1{font-size:20px;margin:0 0 8px}
+    .wrap{display:flex;gap:24px;align-items:flex-start;padding:18px}
+    .side-left{display:flex;flex-direction:column;gap:4px}
+    .side-right{display:flex;flex-direction:column;gap:10px;align-items:center}
+    .board-container{display:flex;gap:24px;align-items:flex-start}
+    .board{display:grid;grid-template-columns:repeat(8,var(--cell));grid-auto-rows:var(--cell);gap:var(--gap);background:#88c3ff30;padding:12px;border-radius:12px}
+    .cell{width:var(--cell);height:var(--cell);display:flex;align-items:center;justify-content:center;border-radius:6px;background:#e9f4ff;cursor:pointer;user-select:none;font-weight:600}
+    .cell:hover{transform:translateY(-2px);box-shadow:0 6px 10px rgba(0,0,0,0.06)}
+    .cell.miss{background:#f0f0f0;color:#777}
+    .cell.hit{background:#ffefef;color:#c00}
+    .cell.sunk{background:#c00;color:#fff}
+    .controls{max-width:300px}
+    .btn{display:inline-block;padding:8px 12px;border-radius:8px;background:#0b7bdc;color:white;text-decoration:none;border:none;cursor:pointer}
+    .btn.secondary{background:#777}
+    .meta{margin-bottom:10px}
+    .status{margin:8px 0;padding:8px;border-radius:8px;background:#fbfbfb;border:1px solid #eee}
+    small{color:#555}
+    .legend{display:flex;gap:8px;margin-top:8px}
+    .legend span{display:inline-flex;align-items:center;gap:6px}
+    .sq{width:16px;height:12px;border-radius:3px}
+    .sq.hit{background:#ff6b6b}
+    .sq.miss{background:#ccc}
+    .sq.unknown{background:#e9f4ff}
+    footer{margin-top:18px;color:#666;font-size:13px}
+    @media (max-width:800px){.wrap{flex-direction:column;align-items:center}.controls{max-width:none}}
+    #bombs{display:grid;grid-template-columns:repeat(3,40px);grid-template-rows:repeat(8,40px);gap:4px;justify-content:center}
+    #bombs img{width:40px;height:40px}
+    #ships-status img{width:60px;height:60px}
+
+    .cell.reveal {
+      background:#b3e5ff; /* bleu clair */
+      color:#004d66;
+    }
+
+  </style>
+</head>
+<body>
+  <h1>Sploosh, Kaboom !</h1>
+  <div class="wrap">
+    <div class="board-container">
+      <div class="side-left" id="bombs"></div>
+      <div>
+        <div id="board" class="board" role="grid" aria-label="Grille 8 par 8"></div>
+        <div style="margin-top:10px"><small>Cliquez sur une case pour tirer.</small></div>
+      </div>
+      <div class="side-right" id="ships-status"></div>
+    </div>
+
+    <div class="controls">
+      <div class="meta">
+        <div><strong>Essais :</strong> <span id="attempts">0</span></div>
+        <div><strong>Restants :</strong> <span id="remaining">9</span></div>
+        <div class="status" id="message">Devinez la position des 3 calamars : tailles 2, 3 et 4.</div>
+      </div>
+
+      <button id="restart" class="btn">Nouvelle partie</button>
+      <button id="reveal" class="btn secondary" style="margin-left:8px">Révéler</button>
+
+      <div class="legend">
+        <span><i class="sq unknown"></i> Inconnu</span>
+        <span><i class="sq miss"></i> Raté</span>
+        <span><i class="sq hit"></i> Touché</span>
+      </div>
+
+      <div style="margin-top:12px">
+        <strong>Calamars :</strong>
+        <ul>
+          <li>Petit : 2 cases</li>
+          <li>Moyen : 3 cases</li>
+          <li>Grand : 4 cases</li>
+        </ul>
+      </div>
+
+      <div style="margin-top:8px"><small>Accessible : utilisez Tab puis Espace/Entrée pour tirer.</small></div>
+    </div>
+  </div>
+
+  <footer>Sploosh Kaboom - Astae</footer>
+
+<script>
+const SIZE = 8;
+const SHIPS = [2,3,4];
+const MAX_ATTEMPTS = 24;
+let grid = [];
+let ships = [];
+let attempts = 0;
+let hitsCount = 0;
+let totalShipCells = SHIPS.reduce((a,b)=>a+b,0);
+
+const boardEl = document.getElementById('board');
+const attemptsEl = document.getElementById('attempts');
+const remainingEl = document.getElementById('remaining');
+const messageEl = document.getElementById('message');
+const restartBtn = document.getElementById('restart');
+const revealBtn = document.getElementById('reveal');
+const bombsEl = document.getElementById('bombs');
+const shipsStatusEl = document.getElementById('ships-status');
+
+// Sons
+const soundSploosh = new Audio('/audio/sploosh.mp3');
+const soundKaboom = new Audio('/audio/kaboooom.mp3');
+
+function initGrid(){ grid = Array.from({length:SIZE},()=>Array(SIZE).fill(0)); }
+
+function placeShipsRandomly(){
+  ships = [];
+  const occupied = Array.from({length:SIZE},()=>Array(SIZE).fill(false));
+  for(const len of SHIPS){
+    let placed = false;
+    for(let tries=0; tries<1000 && !placed; tries++){
+      const horiz = Math.random() < 0.5;
+      const r = Math.floor(Math.random()*SIZE);
+      const c = Math.floor(Math.random()*SIZE);
+      const cells = [];
+      for(let k=0;k<len;k++){
+        const rr = r + (horiz?0:k);
+        const cc = c + (horiz?k:0);
+        if(rr<0||rr>=SIZE||cc<0||cc>=SIZE){ cells.length=0; break }
+        cells.push({r:rr,c:cc});
+      }
+      if(cells.length===0) continue;
+      let ok = true;
+      for(const cell of cells) if(occupied[cell.r][cell.c]){ ok=false; break }
+      if(!ok) continue;
+      for(const cell of cells) occupied[cell.r][cell.c] = true;
+      ships.push({cells, hits: new Set()});
+      placed = true;
+    }
+    if(!placed) throw new Error('Impossible de placer tous les calamars');
+  }
+}
+
+function renderBombs(){
+  bombsEl.innerHTML = '';
+  for(let i=0;i<MAX_ATTEMPTS;i++){
+    const img = document.createElement('img');
+    img.src = '/img/bomb-full.png';
+    bombsEl.appendChild(img);
+  }
+}
+
+function renderShipsStatus(){
+  shipsStatusEl.innerHTML = '';
+  for(let i=0;i<3;i++){
+    const img = document.createElement('img');
+    img.src = '/img/remaining-ship-full.png';
+    img.dataset.index = i;
+    shipsStatusEl.appendChild(img);
+  }
+}
+
+function updateBombs(){
+  const imgs = bombsEl.querySelectorAll('img');
+  if(attempts <= MAX_ATTEMPTS){
+    const img = imgs[attempts-1];
+    if(img) img.src = '/img/bomb-empty.png';
+  }
+}
+
+function updateShipsStatus(){
+  const imgs = shipsStatusEl.querySelectorAll('img');
+  for(let i=0;i<ships.length;i++){
+    if(ships[i].hits.size === ships[i].cells.length){
+      imgs[i].src = '/img/remaining-ship-empty.png';
+    }
+  }
+}
+
+function renderBoard(){
+  boardEl.innerHTML = '';
+  for(let r=0;r<SIZE;r++){
+    for(let c=0;c<SIZE;c++){
+      const btn = document.createElement('button');
+      btn.className = 'cell';
+      btn.dataset.r = r;
+      btn.dataset.c = c;
+      btn.setAttribute('aria-label',`Case ${String.fromCharCode(65+c)}${r+1}`);
+      btn.setAttribute('role','gridcell');
+      btn.tabIndex = 0;
+      const val = grid[r][c];
+      if(val==='M'){btn.classList.add('miss');btn.textContent='•';}
+      else if(val==='H'){btn.classList.add('hit');btn.textContent='✹';}
+      else{btn.textContent='';}
+      btn.addEventListener('click',onCellClick);
+      btn.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();btn.click()}});
+      boardEl.appendChild(btn);
+    }
+  }
+}
+
+function onCellClick(e){
+  const r = Number(e.currentTarget.dataset.r);
+  const c = Number(e.currentTarget.dataset.c);
+  if(grid[r][c]!==0){setMessage('Vous avez déjà tiré ici.');return}
+  if(attempts>=MAX_ATTEMPTS){setMessage('Fin de partie : 24 tirs effectués.');return}
+
+  attempts++;
+  attemptsEl.textContent = attempts;
+  updateBombs();
+
+  let hit=false;
+  for(const ship of ships){
+    for(const cell of ship.cells){
+      if(cell.r===r && cell.c===c){
+        ship.hits.add(`${r},${c}`);
+        hit=true;
+        grid[r][c]='H';
+        hitsCount++;
+        break;
+      }
+    }
+  }
+
+  if(hit){
+    soundKaboom.currentTime=0;
+    soundKaboom.play();
+  } else {
+    grid[r][c]='M';
+    soundSploosh.currentTime=0;
+    soundSploosh.play();
+  }
+
+  updateRemaining();
+  renderBoard();
+  updateShipsStatus();
+
+  if(hit){
+    const sunk=ships.find(s=>s.hits.size===s.cells.length&&!s._announced);
+    if(sunk){sunk._announced=true;setMessage(`Calamar coulé ! Taille ${sunk.cells.length}.`);}else{setMessage('Touché !');}
+  }else{setMessage('Raté.');}
+
+  if(hitsCount===totalShipCells){
+    setMessage(`Victoire en ${attempts} essais. Tous les calamars coulés.`);
+    highlightSunk();
+  }else if(attempts>=MAX_ATTEMPTS){
+    setMessage('Fin de partie : 24 tirs effectués.');
+  }
+}
+
+function setMessage(txt){messageEl.textContent=txt;}
+function updateRemaining(){remainingEl.textContent=totalShipCells-hitsCount;}
+function highlightSunk(){
+  const buttons=boardEl.querySelectorAll('.cell');
+  for(const ship of ships){
+    if(ship.hits.size===ship.cells.length){
+      for(const cell of ship.cells){
+        const idx=cell.r*SIZE+cell.c;
+        const btn=buttons[idx];
+        if(btn){btn.classList.remove('hit');btn.classList.add('sunk');btn.textContent='☠';}
+      }
+    }
+  }
+}
+
+function revealShips(){
+  for(const ship of ships){
+    for(const cell of ship.cells){
+      if(grid[cell.r][cell.c] === 0){
+        grid[cell.r][cell.c] = 'R'; // marque les cases révélées
+      }
+    }
+  }
+  renderBoard();
+  const buttons = boardEl.querySelectorAll('.cell');
+  for(let r=0;r<SIZE;r++){
+    for(let c=0;c<SIZE;c++){
+      if(grid[r][c] === 'R'){
+        const idx = r*SIZE + c;
+        const btn = buttons[idx];
+        if(btn){
+          btn.classList.add('reveal');
+          btn.textContent = '🦑';
+        }
+      }
+    }
+  }
+  setMessage('Positions révélées.');
+}
+
+function newGame(){
+  attempts=0;hitsCount=0;
+  attemptsEl.textContent='0';remainingEl.textContent=totalShipCells;
+  initGrid();placeShipsRandomly();
+  renderBoard();renderBombs();renderShipsStatus();
+  setMessage('Nouvelle partie. Devinez les 3 calamars.');
+}
+
+restartBtn.addEventListener('click',()=>{newGame()});
+revealBtn.addEventListener('click',()=>{revealShips()});
+newGame();
+</script>
+</body>
+</html>
